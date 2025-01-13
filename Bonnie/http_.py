@@ -1,14 +1,19 @@
 import os
+import json
 import mimetypes
 from http.server import BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+from typing import Type, Any
 from Bonnie.settings import load_settings
 
 
 class HttpRequest:
-    def __init__(self, path: str, method: str, client_address: tuple[str, int]):
+    def __init__(self, path: str, method: str, client_address: tuple[str, int], GET: dict[str, Any] = {}, POST: dict[str, Any] = {}):
         self.path = path
         self.method = method
         self.client_address = client_address
+        self.GET = GET
+        self.POST = POST
 
 
 class HttpResponse:
@@ -26,20 +31,61 @@ class HttpResponse:
         request_handler.wfile.write(self.html.encode("utf-8"))
 
 
+class Middleware:
+    def before(self, request: HttpRequest):
+        pass
+
+    def after(self, request: HttpRequest, response: HttpResponse):
+        pass
+
+
+class DebugMiddleware(Middleware):
+    def before(self, request: HttpRequest):
+        print("===== DEBUG REQUEST BEFORE HANDLE =====")
+        print(f"    method : {request.method}")
+        print(f"    path : {request.path}")
+        print(f"    client address : {request.client_address}")
+        print(f"    GET : {request.GET}")
+        print(f"    POST : {request.POST}")
+
+    def after(self, request: HttpRequest, response: HttpResponse):
+        print("===== DEBUG RESPONSE AFTER HANDLE =====")
+        print(f"    status code : {response.status_code}")
+        print(f"    headers : {response.headers}")
+
+
 class HTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
+        parsed_url = urlparse(self.path)
+        query_params = parse_qs(parsed_url.query)
+
         settings = load_settings()
-        file_path = self.get_static_file_path(self.path)
+        file_path = self.get_static_file_path(parsed_url.path)
         if file_path:
             self.serve_static_file(file_path)
         else:
-            view = settings.URLS.get(self.path, None)
+            view = settings.URLS.get(parsed_url.path, None)
             if view:
-                request = HttpRequest(self.path, self.command, self.client_address)
+                request = HttpRequest(
+                    parsed_url.path, self.command, self.client_address,
+                    GET=query_params
+                )
+                self.handle_before_middlewares(request, settings.MIDDLEWARES)
+
                 response = view(self).get(request)
+
+                self.handle_after_middlewares(request, response, settings.MIDDLEWARES)
                 response.response(self)
             else:
                 self.send_error(404, "Page not found")
+
+    def handle_before_middlewares(self, request: HttpRequest, middlewares: list[Type[Middleware]]):
+        for middleware_cls in middlewares:
+            middleware_cls().before(request)
+
+    def handle_after_middlewares(self, request: HttpRequest, response: HttpResponse, middlewares: list[Type[Middleware]]):
+        for middleware_cls in middlewares:
+            middleware_cls().after(request, response)
 
     def get_static_file_path(self, path: str) -> str:
         """Retourne le chemin du fichier statique si le fichier existe."""
@@ -76,19 +122,22 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_error(500, f"Erreur lors de la lecture du fichier : {e}")
 
     def do_POST(self) -> None:
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_data = self.rfile.read(content_length).decode("utf-8")
+
+        try:
+            parsed_data = json.loads(post_data)
+        except json.JSONDecodeError:
+            parsed_data = post_data
+
         view = load_settings().URLS.get(self.path, None)
         if view:
-            view(self).post()
-        # content_length = int(self.headers.get("Content-Length", 0))
-        # post_data = self.rfile.read(content_length).decode("utf-8")
-        # self.send_response(200)
-        # self.send_header("Content-type", "application/json")
-        # self.end_headers()
-        # response = {
-        #     "message": "Données reçues avec succès!",
-        #     "data": post_data
-        # }
-        # self.wfile.write(json.dumps(response).encode("utf-8"))
+            request = HttpRequest(
+                self.path, self.command, self.client_address,
+                POST=parsed_data
+            )
+            response = view(self).post(request)
+            response.response(self)
 
     def do_PUT(self) -> None:
         view = load_settings().URLS.get(self.path, None)
