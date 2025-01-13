@@ -1,4 +1,3 @@
-import os
 from Bonnie.http_ import HttpRequest, HttpResponse
 from Bonnie.html_ import Component
 

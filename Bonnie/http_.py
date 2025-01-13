@@ -2,18 +2,29 @@ import os
 import json
 import mimetypes
 from http.server import BaseHTTPRequestHandler
+from http.cookies import SimpleCookie
 from urllib.parse import urlparse, parse_qs
 from typing import Type, Any
 from Bonnie.settings import load_settings
 
 
 class HttpRequest:
-    def __init__(self, path: str, method: str, client_address: tuple[str, int], GET: dict[str, Any] = {}, POST: dict[str, Any] = {}):
+    def __init__(self, path: str, method: str, client_address: tuple[str, int], headers: dict, GET: dict[str, Any] = {}, POST: dict[str, Any] = {}):
         self.path = path
         self.method = method
         self.client_address = client_address
         self.GET = GET
         self.POST = POST
+        self.headers = headers
+        self.cookies = self.parse_cookies(headers.get("Cookie", ""))
+
+    def parse_cookies(self, cookie_header: str) -> dict:
+        cookies = {}
+        if cookie_header:
+            cookie = SimpleCookie(cookie_header)
+            for key, morsel in cookie.items():
+                cookies[key] = morsel.value
+        return cookies
 
 
 class HttpResponse:
@@ -47,6 +58,8 @@ class DebugMiddleware(Middleware):
         print(f"    client address : {request.client_address}")
         print(f"    GET : {request.GET}")
         print(f"    POST : {request.POST}")
+        print(f"    headers : {request.headers}")
+        print(f"    cookies : {request.cookies}")
 
     def after(self, request: HttpRequest, response: HttpResponse):
         print("===== DEBUG RESPONSE AFTER HANDLE =====")
@@ -68,7 +81,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             if view:
                 request = HttpRequest(
                     parsed_url.path, self.command, self.client_address,
-                    GET=query_params
+                    headers=self.headers, GET=query_params
                 )
                 self.handle_before_middlewares(request, settings.MIDDLEWARES)
 
