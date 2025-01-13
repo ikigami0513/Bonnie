@@ -1,5 +1,7 @@
 # Bonnie Framework
 
+![Example Image](assets/logo.png)
+
 Bonnie is a lightweight and simple web framework for Python, designed to help build web applications with a focus on flexibility, ease of integration, and extensibility.
 
 ## Features
